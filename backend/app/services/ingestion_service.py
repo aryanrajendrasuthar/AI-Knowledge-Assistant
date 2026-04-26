@@ -3,9 +3,9 @@ import uuid
 
 import fitz  # PyMuPDF
 from docx import Document as DocxDocument
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient, models
 
-from app.core.qdrant_client import ensure_collection
+from app.core.qdrant_client import ensure_collection, get_embed_model
 
 CHUNK_SIZE = 500
 OVERLAP = 50
@@ -46,16 +46,19 @@ async def ingest(
 
     ensure_collection(client, collection)
 
+    embed_model = get_embed_model()
+    embeddings = list(embed_model.passage_embed(chunks))
+
     doc_id = str(uuid.uuid4())
-    metadata = [
-        {"document": filename, "doc_id": doc_id, "chunk_index": i}
-        for i in range(len(chunks))
+    points = [
+        models.PointStruct(
+            id=str(uuid.uuid4()),
+            vector=emb.tolist(),
+            payload={"document": filename, "doc_id": doc_id, "chunk_index": i, "text": chunk},
+        )
+        for i, (chunk, emb) in enumerate(zip(chunks, embeddings))
     ]
 
-    client.add(
-        collection_name=collection,
-        documents=chunks,
-        metadata=metadata,
-    )
+    client.upsert(collection_name=collection, points=points)
 
     return {"doc_id": doc_id, "name": filename, "chunks": len(chunks)}

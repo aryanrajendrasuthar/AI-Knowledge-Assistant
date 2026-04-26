@@ -7,12 +7,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
 
 from app.core.config import settings
-from app.core.qdrant_client import get_qdrant
+from app.core.qdrant_client import get_embed_model, get_qdrant
 
 SYSTEM_PROMPT = (
     "You are a knowledgeable AI assistant. Answer questions based strictly on the "
-    "provided context documents. Be accurate and concise. Cite which source documents "
-    "you used. If the context lacks enough information to answer, say so clearly."
+    "provided context documents. Be accurate and concise. Do NOT include inline source "
+    "references or citations in your answer — sources are shown separately. "
+    "If the context lacks enough information to answer, say so clearly."
 )
 
 
@@ -32,7 +33,7 @@ async def stream_rag_response(
 ) -> AsyncGenerator[str, None]:
     key = _cache_key(query)
 
-    # Cache hit — stream cached answer instantly
+    # Cache hit — return instantly
     cached = await redis.get(key)
     if cached:
         data = json.loads(cached)
@@ -41,14 +42,17 @@ async def stream_rag_response(
         yield _sse({"type": "done", "cached": True})
         return
 
-    # Retrieve relevant chunks from Qdrant
+    # Embed query and retrieve from Qdrant
     qdrant = get_qdrant()
+    embed_model = get_embed_model()
+
     try:
-        results = qdrant.query(
+        query_embedding = list(embed_model.query_embed([query]))[0].tolist()
+        results = qdrant.query_points(
             collection_name=settings.qdrant_collection,
-            query_text=query,
+            query=query_embedding,
             limit=top_k,
-        )
+        ).points
     except Exception:
         yield _sse({"type": "error", "message": "No documents indexed yet. Upload documents first."})
         return
@@ -59,19 +63,19 @@ async def stream_rag_response(
 
     sources = [
         {
-            "document": r.metadata.get("document", "unknown"),
-            "chunk_index": r.metadata.get("chunk_index", 0),
+            "document": (r.payload or {}).get("document", "unknown"),
+            "chunk_index": (r.payload or {}).get("chunk_index", 0),
         }
         for r in results
     ]
     context = "\n\n---\n\n".join(
-        f"[Source: {r.metadata.get('document', 'unknown')}]\n{r.document}"
+        f"[Source: {(r.payload or {}).get('document', 'unknown')}]\n{(r.payload or {}).get('text', '')}"
         for r in results
     )
 
-    # Build and stream LLM response
+    # Stream LLM response
     llm = ChatGroq(
-        model="llama-3.1-70b-versatile",
+        model="llama-3.3-70b-versatile",
         api_key=settings.groq_api_key,
         temperature=0.1,
         streaming=True,
@@ -89,13 +93,12 @@ async def stream_rag_response(
                 full_answer += token
                 yield _sse({"type": "token", "content": token})
     except Exception as e:
-        yield _sse({"type": "error", "message": f"LLM error: {str(e)}"})
+        yield _sse({"type": "error", "message": f"LLM error: {e}"})
         return
 
     yield _sse({"type": "sources", "sources": sources})
     yield _sse({"type": "done", "cached": False})
 
-    # Cache the response
     if full_answer:
         await redis.setex(
             key,
