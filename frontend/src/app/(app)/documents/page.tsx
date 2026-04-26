@@ -1,42 +1,15 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Upload, FileText, Trash2, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { useCallback, useState } from "react";
+import { Upload, FileText, Trash2, CheckCircle, AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-
-type DocStatus = "processing" | "ready" | "error";
-
-type Doc = {
-  id: string;
-  name: string;
-  size: number;
-  status: DocStatus;
-  chunks: number;
-  uploadedAt: Date;
-};
-
-const MOCK_DOCS: Doc[] = [
-  {
-    id: "1",
-    name: "company-handbook.pdf",
-    size: 2_400_000,
-    status: "ready",
-    chunks: 142,
-    uploadedAt: new Date(Date.now() - 1_800_000),
-  },
-  {
-    id: "2",
-    name: "product-documentation.pdf",
-    size: 890_000,
-    status: "ready",
-    chunks: 67,
-    uploadedAt: new Date(Date.now() - 7_200_000),
-  },
-];
+import { api, type DocumentMeta } from "@/lib/api-client";
 
 function formatBytes(b: number) {
   if (b < 1024) return `${b} B`;
@@ -44,8 +17,8 @@ function formatBytes(b: number) {
   return `${(b / 1_048_576).toFixed(1)} MB`;
 }
 
-function timeAgo(d: Date) {
-  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+function timeAgo(unixStr: string) {
+  const s = Math.floor((Date.now() - Number(unixStr) * 1000) / 1000);
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
@@ -53,82 +26,108 @@ function timeAgo(d: Date) {
 }
 
 export default function DocumentsPage() {
-  const [docs, setDocs] = useState<Doc[]>(MOCK_DOCS);
+  const queryClient = useQueryClient();
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
-  const simulateUpload = useCallback((files: FileList) => {
-    const file = files[0];
-    if (!file) return;
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ["documents"],
+    queryFn: () => api.documents.list(),
+    refetchInterval: 10_000,
+  });
 
-    const allowed = ["application/pdf", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
-    if (!allowed.includes(file.type)) {
-      toast.error("Only PDF, TXT, and DOCX files are supported.");
-      return;
-    }
+  const deleteMutation = useMutation({
+    mutationFn: (docId: string) => api.documents.delete(docId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      toast.success("Document deleted.");
+    },
+    onError: () => toast.error("Failed to delete document."),
+  });
 
-    setUploadProgress(0);
-    const interval = setInterval(() => {
-      setUploadProgress((p) => {
-        if (p === null || p >= 100) {
-          clearInterval(interval);
-          return null;
-        }
-        return p + 20;
-      });
-    }, 300);
+  const uploadFile = useCallback(
+    async (file: File) => {
+      const allowed = [".pdf", ".txt", ".docx"];
+      const ext = "." + file.name.split(".").pop()?.toLowerCase();
+      if (!allowed.includes(ext)) {
+        toast.error("Only PDF, TXT, and DOCX files are supported.");
+        return;
+      }
+      if (file.size > 50 * 1024 * 1024) {
+        toast.error("File exceeds 50 MB limit.");
+        return;
+      }
 
-    setTimeout(() => {
-      clearInterval(interval);
-      setUploadProgress(null);
-      setDocs((prev) => [
-        {
-          id: crypto.randomUUID(),
-          name: file.name,
-          size: file.size,
-          status: "ready",
-          chunks: Math.floor(file.size / 500),
-          uploadedAt: new Date(),
-        },
-        ...prev,
-      ]);
-      toast.success(`${file.name} ingested successfully.`);
-    }, 1800);
-  }, []);
+      setUploadProgress(10);
+      const tick = setInterval(
+        () => setUploadProgress((p) => (p && p < 85 ? p + 15 : p)),
+        400
+      );
+
+      try {
+        const result = await api.documents.upload(file);
+        clearInterval(tick);
+        setUploadProgress(100);
+        setTimeout(() => setUploadProgress(null), 600);
+        queryClient.invalidateQueries({ queryKey: ["documents"] });
+        toast.success(`${result.name} — ${result.chunks} chunks indexed.`);
+      } catch (err) {
+        clearInterval(tick);
+        setUploadProgress(null);
+        toast.error(err instanceof Error ? err.message : "Upload failed.");
+      }
+    },
+    [queryClient]
+  );
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
-      if (e.dataTransfer.files.length) simulateUpload(e.dataTransfer.files);
+      const file = e.dataTransfer.files[0];
+      if (file) uploadFile(file);
     },
-    [simulateUpload]
+    [uploadFile]
   );
 
   const handleFileInput = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files?.length) simulateUpload(e.target.files);
+      const file = e.target.files?.[0];
+      if (file) uploadFile(file);
+      e.target.value = "";
     },
-    [simulateUpload]
+    [uploadFile]
   );
 
+  const docs = data?.documents ?? [];
   const totalChunks = docs.reduce((a, d) => a + d.chunks, 0);
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto p-6 space-y-6">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">Knowledge Base</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Upload documents to enable semantic search and AI-powered Q&amp;A.
-          </p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-xl font-semibold text-foreground">Knowledge Base</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Upload documents to enable semantic search and AI-powered Q&amp;A.
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground"
+            onClick={() => refetch()}
+          >
+            <RefreshCw className="w-4 h-4" />
+          </Button>
         </div>
 
+        {/* Stats */}
         <div className="grid grid-cols-3 gap-4">
           {[
-            { label: "Documents", value: docs.length },
-            { label: "Total Chunks", value: totalChunks },
-            { label: "Status", value: "Operational" },
+            { label: "Documents", value: isLoading ? "—" : docs.length },
+            { label: "Total Chunks", value: isLoading ? "—" : totalChunks },
+            { label: "Status", value: isError ? "Error" : "Operational" },
           ].map(({ label, value }) => (
             <Card key={label} className="p-4 bg-card border-border">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
@@ -139,6 +138,7 @@ export default function DocumentsPage() {
           ))}
         </div>
 
+        {/* Upload Zone */}
         <label
           htmlFor="file-upload"
           onDrop={handleDrop}
@@ -148,7 +148,7 @@ export default function DocumentsPage() {
             "flex flex-col items-center gap-3 border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors",
             isDragging
               ? "border-primary bg-primary/5"
-              : "border-border hover:border-border/80 hover:bg-accent/40"
+              : "border-border hover:border-border/60 hover:bg-accent/30"
           )}
         >
           <div className="w-10 h-10 rounded-lg bg-accent flex items-center justify-center">
@@ -156,8 +156,7 @@ export default function DocumentsPage() {
           </div>
           <div>
             <p className="text-sm font-medium text-foreground">
-              Drop files here or{" "}
-              <span className="text-primary">browse</span>
+              Drop files here or <span className="text-primary">browse</span>
             </p>
             <p className="text-xs text-muted-foreground mt-1">PDF, TXT, DOCX · up to 50 MB</p>
           </div>
@@ -167,82 +166,94 @@ export default function DocumentsPage() {
             accept=".pdf,.txt,.docx"
             className="hidden"
             onChange={handleFileInput}
+            disabled={uploadProgress !== null}
           />
         </label>
 
         {uploadProgress !== null && (
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Uploading &amp; ingesting…</span>
+              <span>Uploading &amp; indexing…</span>
               <span>{uploadProgress}%</span>
             </div>
             <Progress value={uploadProgress} className="h-1.5" />
           </div>
         )}
 
-        {docs.length > 0 && (
+        {/* Document list */}
+        {isLoading ? (
+          <div className="space-y-2">
+            {[1, 2].map((i) => (
+              <Skeleton key={i} className="h-16 w-full rounded-lg" />
+            ))}
+          </div>
+        ) : isError ? (
+          <p className="text-sm text-destructive text-center py-4">
+            Failed to load documents. Is the backend running?
+          </p>
+        ) : docs.length > 0 ? (
           <div className="space-y-2">
             <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              Uploaded Documents
+              Indexed Documents
             </h2>
-            <div className="space-y-2">
-              {docs.map((doc) => (
-                <div
-                  key={doc.id}
-                  className="flex items-center gap-4 p-4 bg-card border border-border rounded-lg group"
-                >
-                  <div className="w-8 h-8 rounded-md bg-accent flex items-center justify-center flex-shrink-0">
-                    <FileText className="w-4 h-4 text-muted-foreground" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{doc.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatBytes(doc.size)} · {doc.chunks} chunks · {timeAgo(doc.uploadedAt)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <StatusBadge status={doc.status} />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => {
-                        setDocs((prev) => prev.filter((d) => d.id !== doc.id));
-                        toast.success(`${doc.name} removed.`);
-                      }}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
+            {docs.map((doc) => (
+              <DocRow
+                key={doc.doc_id}
+                doc={doc}
+                onDelete={() => deleteMutation.mutate(doc.doc_id)}
+                isDeleting={deleteMutation.isPending && deleteMutation.variables === doc.doc_id}
+              />
+            ))}
           </div>
+        ) : (
+          <p className="text-sm text-muted-foreground text-center py-4">
+            No documents yet. Upload one to get started.
+          </p>
         )}
       </div>
     </div>
   );
 }
 
-function StatusBadge({ status }: { status: DocStatus }) {
-  if (status === "ready")
-    return (
-      <div className="flex items-center gap-1 text-xs text-emerald-400">
-        <CheckCircle className="w-3.5 h-3.5" />
-        Ready
-      </div>
-    );
-  if (status === "error")
-    return (
-      <div className="flex items-center gap-1 text-xs text-destructive">
-        <AlertCircle className="w-3.5 h-3.5" />
-        Error
-      </div>
-    );
+function DocRow({
+  doc,
+  onDelete,
+  isDeleting,
+}: {
+  doc: DocumentMeta;
+  onDelete: () => void;
+  isDeleting: boolean;
+}) {
   return (
-    <div className="flex items-center gap-1 text-xs text-yellow-400">
-      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-      Processing
+    <div className="flex items-center gap-4 p-4 bg-card border border-border rounded-lg group">
+      <div className="w-8 h-8 rounded-md bg-accent flex items-center justify-center shrink-0">
+        <FileText className="w-4 h-4 text-muted-foreground" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-foreground truncate">{doc.name}</p>
+        <p className="text-xs text-muted-foreground">
+          {formatBytes(doc.size)} · {doc.chunks} chunks · {timeAgo(doc.uploaded_at)}
+        </p>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1 text-xs text-emerald-400">
+          <CheckCircle className="w-3.5 h-3.5" />
+          Ready
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+          onClick={onDelete}
+          disabled={isDeleting}
+        >
+          {isDeleting ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Trash2 className="w-3.5 h-3.5" />
+          )}
+        </Button>
+      </div>
     </div>
   );
 }

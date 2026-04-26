@@ -1,55 +1,29 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, Loader2, Sparkles } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { Send, Bot, User, Loader2, Sparkles, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
-
-type Message = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  sources?: string[];
-};
+import { useChat } from "@/hooks/useChat";
+import { useState } from "react";
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const { messages, isStreaming, sendMessage, clearMessages } = useChat();
   const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
+  }, [messages, isStreaming]);
 
   async function handleSubmit(e?: React.FormEvent) {
     e?.preventDefault();
     const query = input.trim();
-    if (!query || isLoading) return;
-
-    const userMsg: Message = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: query,
-    };
-    setMessages((prev) => [...prev, userMsg]);
+    if (!query || isStreaming) return;
     setInput("");
-    setIsLoading(true);
-
-    // Phase 2: replace with real SSE stream from backend
-    await new Promise((r) => setTimeout(r, 1000));
-    const aiMsg: Message = {
-      id: crypto.randomUUID(),
-      role: "assistant",
-      content:
-        "Backend RAG pipeline connects in Phase 2. Upload documents in the **Documents** tab, then ask anything — answers will stream here with source citations.",
-      sources: ["example-doc.pdf"],
-    };
-    setMessages((prev) => [...prev, aiMsg]);
-    setIsLoading(false);
+    await sendMessage(query);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -62,13 +36,15 @@ export default function ChatPage() {
   return (
     <div className="flex flex-col h-full">
       <div className="h-14 px-6 flex items-center justify-between border-b border-border flex-shrink-0">
-        <h1 className="text-sm font-medium text-muted-foreground">New Chat</h1>
+        <h1 className="text-sm font-medium text-muted-foreground">
+          {messages.length === 0 ? "New Chat" : `${messages.filter((m) => m.role === "user").length} messages`}
+        </h1>
         {messages.length > 0 && (
           <Button
             variant="ghost"
             size="sm"
             className="text-xs text-muted-foreground h-7"
-            onClick={() => setMessages([])}
+            onClick={clearMessages}
           >
             Clear
           </Button>
@@ -83,40 +59,39 @@ export default function ChatPage() {
             {messages.map((msg) => (
               <MessageBubble key={msg.id} message={msg} />
             ))}
-            {isLoading && <TypingIndicator />}
+            {isStreaming && messages[messages.length - 1]?.role === "user" && (
+              <TypingIndicator />
+            )}
             <div ref={bottomRef} />
           </div>
         )}
       </div>
 
       <div className="p-4 border-t border-border flex-shrink-0">
-        <form
-          onSubmit={handleSubmit}
-          className="flex gap-3 max-w-3xl mx-auto items-end"
-        >
+        <form onSubmit={handleSubmit} className="flex gap-3 max-w-3xl mx-auto items-end">
           <Textarea
-            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask anything about your documents..."
             className="min-h-[48px] max-h-36 resize-none text-sm"
             rows={1}
+            disabled={isStreaming}
           />
           <Button
             type="submit"
             size="icon"
-            disabled={!input.trim() || isLoading}
+            disabled={!input.trim() || isStreaming}
             className="h-12 w-12 flex-shrink-0 bg-primary hover:bg-primary/90"
           >
-            {isLoading ? (
+            {isStreaming ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <Send className="w-4 h-4" />
             )}
           </Button>
         </form>
-        <p className="text-center text-xs text-muted-foreground/50 mt-2 max-w-3xl mx-auto">
+        <p className="text-center text-xs text-muted-foreground/40 mt-2 max-w-3xl mx-auto">
           Enter to send · Shift+Enter for new line
         </p>
       </div>
@@ -130,18 +105,15 @@ function EmptyState() {
       <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-4">
         <Sparkles className="w-5 h-5 text-primary" />
       </div>
-      <h2 className="text-base font-semibold text-foreground mb-2">
-        Ask your knowledge base
-      </h2>
+      <h2 className="text-base font-semibold text-foreground mb-2">Ask your knowledge base</h2>
       <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
-        Upload documents in the Documents tab, then ask questions here. Answers
-        stream with source citations.
+        Upload documents in the Documents tab, then ask questions here. Answers stream with source citations.
       </p>
     </div>
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message }: { message: ReturnType<typeof useChat>["messages"][number] }) {
   const isUser = message.role === "user";
 
   return (
@@ -149,13 +121,13 @@ function MessageBubble({ message }: { message: Message }) {
       <div
         className={cn(
           "w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5",
-          isUser
-            ? "bg-secondary"
-            : "bg-primary/10 border border-primary/20"
+          isUser ? "bg-secondary" : "bg-primary/10 border border-primary/20"
         )}
       >
         {isUser ? (
           <User className="w-3.5 h-3.5 text-muted-foreground" />
+        ) : message.error ? (
+          <AlertCircle className="w-3.5 h-3.5 text-destructive" />
         ) : (
           <Bot className="w-3.5 h-3.5 text-primary" />
         )}
@@ -167,22 +139,28 @@ function MessageBubble({ message }: { message: Message }) {
             "rounded-xl px-4 py-3 text-sm leading-relaxed",
             isUser
               ? "bg-secondary text-foreground rounded-tr-sm"
+              : message.error
+              ? "bg-destructive/10 border border-destructive/20 text-destructive rounded-tl-sm"
               : "bg-card border border-border text-foreground rounded-tl-sm"
           )}
         >
-          <div className="prose prose-sm prose-invert max-w-none">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
-          </div>
+          {isUser ? (
+            message.content
+          ) : (
+            <div className="prose prose-sm prose-invert max-w-none">
+              <ReactMarkdown>{message.content}</ReactMarkdown>
+            </div>
+          )}
         </div>
 
         {message.sources && message.sources.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {message.sources.map((src) => (
+            {message.sources.map((src, i) => (
               <span
-                key={src}
+                key={i}
                 className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20"
               >
-                {src}
+                {src.document}
               </span>
             ))}
           </div>
