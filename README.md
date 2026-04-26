@@ -8,7 +8,7 @@ Production-grade RAG system — upload documents, ask questions, get AI-generate
 - **Backend**: FastAPI (Python 3.12), LangChain, Pydantic v2, uvicorn
 - **Vector DB**: Qdrant
 - **Cache**: Redis
-- **LLM**: Groq (llama-3.1-70b) for dev → OpenAI (gpt-4o-mini) for prod
+- **LLM**: Groq (llama-3.3-70b-versatile) for dev → OpenAI (gpt-4o-mini) for prod
 - **Infra**: Docker, GitHub Actions CI/CD, Vercel (frontend), Railway (backend)
 
 ## Project Structure
@@ -77,3 +77,12 @@ cd frontend && npm run type-check && npm run lint
 - Connect GitHub repo in Railway dashboard
 - Add all env vars from `.env.example`
 - Auto-deploys on push to `main`
+
+---
+
+## Ownership
+
+© 2026 Aryan Rajendra Suthar. All Rights Reserved.
+
+This project is proprietary. Unauthorized copying, distribution, or use is prohibited.
+See [LICENSE](LICENSE) · [CONFIDENTIALITY.md](CONFIDENTIALITY.md) · [AUTHORS.md](AUTHORS.md)

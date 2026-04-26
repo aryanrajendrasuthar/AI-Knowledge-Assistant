@@ -1,5 +1,6 @@
 "use client";
-
+// Copyright (c) 2026 Aryan Rajendra Suthar. All Rights Reserved.
+// Proprietary and confidential. Unauthorized use prohibited.
 import { useCallback, useState } from "react";
 import { Upload, FileText, Trash2, CheckCircle, AlertCircle, Loader2, RefreshCw } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";

@@ -1,5 +1,6 @@
 "use client";
-
+// Copyright (c) 2026 Aryan Rajendra Suthar. All Rights Reserved.
+// Proprietary and confidential. Unauthorized use prohibited.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useState } from "react";

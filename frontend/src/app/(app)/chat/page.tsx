@@ -1,5 +1,6 @@
 "use client";
-
+// Copyright (c) 2026 Aryan Rajendra Suthar. All Rights Reserved.
+// Proprietary and confidential. Unauthorized use prohibited.
 import { useEffect, useRef } from "react";
 import { Send, Bot, User, Loader2, Sparkles, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";

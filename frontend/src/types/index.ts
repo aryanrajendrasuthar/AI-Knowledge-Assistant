@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Aryan Rajendra Suthar. All Rights Reserved.
+// Proprietary and confidential. Unauthorized use prohibited.
 export type MessageRole = "user" | "assistant";
 
 export type Source = {

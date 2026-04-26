@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Aryan Rajendra Suthar. All Rights Reserved.
+# Proprietary and confidential. Unauthorized use prohibited.
 import redis.asyncio as aioredis
 
 from app.core.config import settings

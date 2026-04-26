@@ -1,5 +1,6 @@
 "use client";
-
+// Copyright (c) 2026 Aryan Rajendra Suthar. All Rights Reserved.
+// Proprietary and confidential. Unauthorized use prohibited.
 import { useCallback, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 
